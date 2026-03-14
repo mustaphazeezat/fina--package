@@ -39,6 +39,10 @@ NormHDPResult normHDP_mcmc(
     const Eigen::VectorXd& baynorm_phi_estimate,
     const std::vector<Eigen::VectorXd>& baynorm_beta
 ) {
+
+		if ((int)use_sparse_prior + (int)use_spike_slab + (int)use_reg_horseshoe > 1) {
+    throw std::runtime_error("Only one sparse prior flag may be active at a time.");
+}
     // ============ Dimensions ============
     int D = Y.size();
     int G = Y[0].rows();
@@ -243,22 +247,34 @@ NormHDPResult normHDP_mcmc(
     HorseshoeParams horseshoe_params;
     RegularizedHorseshoeParams reg_horseshoe_params;
 
-    // CRITICAL: ALWAYS initialize to prevent Windows crashes from garbage values
-    // Even if not using horseshoe, we need valid (empty) params for safety
-    horseshoe_params = initialize_horseshoe_params(J, G);
-    reg_horseshoe_params = initialize_regularized_horseshoe_params(J, G, p_0);
 
-    // Override with empirical initialization if requested
-    if (use_sparse_prior && empirical) {
-        horseshoe_params = initialize_horseshoe_params_empirical(
-            J, G, mu_baseline, mu_star_1_J_initial
-        );
+	if (use_sparse_prior) {
+        if (empirical) {
+            horseshoe_params = initialize_horseshoe_params_empirical(
+                J, G,
+                mu_baseline,
+                mu_star_1_J_initial
+            );
+
+        } else {
+            horseshoe_params = initialize_horseshoe_params(J, G);
+
+        }
     }
 
-    if (use_reg_horseshoe && empirical) {
-        reg_horseshoe_params = initialize_regularized_horseshoe_params_empirical(
-            J, G, p_0, mu_baseline, mu_star_1_J_initial
-        );
+    if (use_reg_horseshoe) {
+        if (empirical) {
+            reg_horseshoe_params = initialize_regularized_horseshoe_params_empirical(
+                J, G, p_0,
+                mu_baseline,
+                mu_star_1_J_initial
+            );
+
+
+        } else {
+            reg_horseshoe_params = initialize_regularized_horseshoe_params(J, G, p_0);
+
+        }
     }
 
     // Initialize spike-slab parameters (if using)

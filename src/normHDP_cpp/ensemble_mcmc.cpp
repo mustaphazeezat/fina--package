@@ -66,7 +66,8 @@ ChainResult run_single_chain_safe(
 ) {
     if (print_progress) {
         std::lock_guard<std::mutex> lock(progress_mutex);
-        Rcpp::Rcout << "Starting chain " << (chain_id + 1) << std::endl;
+       	std::cout << "Starting chain " << (chain_id + 1) << std::endl;
+    	std::cout.flush();
     }
 
     // Initialize RNG with different seed for each chain
@@ -90,7 +91,8 @@ ChainResult run_single_chain_safe(
 
     if (print_progress) {
         std::lock_guard<std::mutex> lock(progress_mutex);
-        Rcpp::Rcout << "Completed chain " << (chain_id + 1) << std::endl;
+        std::cout << "Starting chain " << (chain_id + 1) << std::endl;
+    	std::cout.flush();
     }
 
     // Copy to plain struct - WITH SAFETY CHECKS
@@ -196,6 +198,9 @@ Rcpp::List ensemble_mcmc_R(
     Rcpp::NumericVector baynorm_phi_estimate,
     Rcpp::List baynorm_beta_list
 ) {
+		if ((int)use_sparse_prior + (int)use_spike_slab + (int)use_reg_horseshoe > 1) {
+    Rcpp::stop("Only one of use_sparse_prior, use_spike_slab, use_reg_horseshoe may be TRUE at a time.");
+}
     // Convert all R objects to C++ BEFORE threading
     int D = Y.size();
 
@@ -254,19 +259,29 @@ Rcpp::List ensemble_mcmc_R(
         std::vector<std::thread> threads;
 
         if (print_progress) {
-            Rcpp::Rcout << "Running chains " << (batch_start + 1)
-                        << " to " << batch_end << "...\n";
+			std::cout << "Running chains " << (batch_start + 1)
+                        << " to " << batch_end << "...\n" << std::endl;
+    		std::cout.flush();
         }
 
         // Launch threads
         for (int i = batch_start; i < batch_end; i++) {
             threads.emplace_back([&, i]() {
+				try {
                 chain_results[i] = run_single_chain_safe(
                     Y_vec, J, chain_length, thinning, empirical, burn_in, quadratic,
                     beta_mean, alpha_mu_2, adaptive_prop, save_only_z, use_sparse_prior,
                     use_spike_slab, use_reg_horseshoe, p_0, mu_vec, phi_vec, baynorm_beta,
                     i, print_progress
                 );
+			} catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(progress_mutex);
+        std::cerr << "Chain " << i << " failed: " << e.what() << std::endl;
+        // Leave chain_results[i] in default state
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(progress_mutex);
+        std::cerr << "Chain " << i << " failed with unknown error" << std::endl;
+    }
             });
         }
 
@@ -283,6 +298,7 @@ Rcpp::List ensemble_mcmc_R(
         if (print_progress) {
             Rcpp::Rcout << "Batch completed (" << batch_end << "/" << num_chains
                         << " chains done)\n\n";
+
         }
     }
 
@@ -549,7 +565,9 @@ Rcpp::List ensemble_mcmc_R(
     Eigen::VectorXd tau_mean, tau_sd;
     double sigma_mu_mean = 0.0, sigma_mu_sd = 0.0;
 
-    if (use_sparse_prior && !chain_results[0].horseshoe_output.empty()) {
+    if (use_sparse_prior && num_chains > 0 &&
+    !chain_results.empty() &&
+    !chain_results[0].horseshoe_output.empty()) {
         Rcpp::Rcout << "Computing horseshoe parameter statistics...\n";
 
         // Collect horseshoe samples from all chains (last sample from each chain)
