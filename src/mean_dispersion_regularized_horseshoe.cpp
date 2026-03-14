@@ -12,7 +12,22 @@
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 static inline double lambda_tilde_sq(double lambda_sq, double tau_sq, double c_sq) {
-    return (c_sq * lambda_sq) / (c_sq + tau_sq * lambda_sq);
+    // CRITICAL: Validate inputs
+    if (!std::isfinite(lambda_sq) || lambda_sq < 0) return 0.0;
+    if (!std::isfinite(tau_sq) || tau_sq <= 0) return 0.0;
+    if (!std::isfinite(c_sq) || c_sq <= 0) return 0.0;
+
+    double denom = c_sq + tau_sq * lambda_sq;
+
+    // CRITICAL: Check denominator
+    if (!std::isfinite(denom) || denom <= 0) return 0.0;
+
+    double result = (c_sq * lambda_sq) / denom;
+
+    // CRITICAL: Check result
+    if (!std::isfinite(result) || result < 0) return 0.0;
+
+    return result;
 }
 
 // Log-unnormalized posterior for log(λ_{jg}) — used in MH step
@@ -24,17 +39,42 @@ static double log_post_log_lambda(
     double sigma_sq,
     double c_sq
 ) {
+    const double INF = -std::numeric_limits<double>::infinity();
+
+    // CRITICAL: Validate all inputs
+    if (!std::isfinite(delta)) return INF;
+    if (!std::isfinite(nu) || nu <= 0) return INF;
+    if (!std::isfinite(tau_sq) || tau_sq <= 0) return INF;
+    if (!std::isfinite(sigma_sq) || sigma_sq <= 0) return INF;
+    if (!std::isfinite(c_sq) || c_sq <= 0) return INF;
+
+    // CRITICAL: Bound log_lambda to prevent overflow
+    if (log_lambda > 10.0 || log_lambda < -10.0) return INF;
+
     double lambda   = std::exp(log_lambda);
     double lsq      = lambda * lambda;
     double lt_sq    = lambda_tilde_sq(lsq, tau_sq, c_sq);
 
-    if (lt_sq <= 0.0 || !std::isfinite(lt_sq)) return -std::numeric_limits<double>::infinity();
-
+    if (lt_sq <= 0.0 || !std::isfinite(lt_sq)) return INF;
 
     double lp = 0.0;
-    lp += -0.5 * std::log(lt_sq) - (delta * delta) / (2.0 * sigma_sq * tau_sq * lt_sq);  // likelihood
-    lp += -(1.5) * std::log(lsq) - 1.0 / (nu * lsq);   // InvGamma(1/2, 1/nu) prior on lambda^2
-    lp += log_lambda;   // Jacobian for sampling in log-space
+
+    // Likelihood term
+    double lik_term = (delta * delta) / (2.0 * sigma_sq * tau_sq * lt_sq);
+    if (!std::isfinite(lik_term)) return INF;
+    lp += -0.5 * std::log(lt_sq) - lik_term;
+
+    // Prior term
+    double prior_term = 1.0 / (nu * lsq);
+    if (!std::isfinite(prior_term)) return INF;
+    lp += -(1.5) * std::log(lsq) - prior_term;
+
+    // Jacobian
+    lp += log_lambda;
+
+    // Final check
+    if (!std::isfinite(lp)) return INF;
+
     return lp;
 }
 
@@ -76,7 +116,7 @@ void update_tau_makalic_schmidt_regularized(
     const double log_eps = 1e-10;       // small constant for log stability
     const double tau_min = 0.01;        // lower bound for tau
     const double tau_max = 50.0;        // FIXED: Reasonable upper bound (was 10, then removed)
-    const double c_sq = rhs_params.c_squared;
+    // Note: c_squared not needed in tau update (only for lambda_tilde in lambda update)
     const double sigma_sq = rhs_params.sigma_mu * rhs_params.sigma_mu;
 
     for (int j = 0; j < J; j++) {
@@ -395,8 +435,26 @@ MeanDispersionRegularizedHorseshoeResult mean_dispersion_regularized_horseshoe_m
 
     MeanDispersionRegularizedHorseshoeResult result;
 
-    const double c_sq = rhs_params.c_squared;    // FIXED — never changes
-    double sigma_sq = rhs_params.sigma_mu * rhs_params.sigma_mu;
+    const double c_sq = rhs_params.c_squared;
+
+    // CRITICAL: Validate c_squared
+    if (!std::isfinite(c_sq) || c_sq <= 0) {
+        #ifdef RCPP_VERSION
+        Rcpp::stop("Invalid c_squared value in regularized horseshoe!");
+        #else
+        throw std::runtime_error("Invalid c_squared value in regularized horseshoe!");
+        #endif
+    }
+
+    double sigma_mu = rhs_params.sigma_mu;
+
+    // CRITICAL: Validate sigma_mu
+    if (!std::isfinite(sigma_mu) || sigma_mu <= 0) {
+        sigma_mu = 1.0;
+        rhs_params.sigma_mu = 1.0;
+    }
+
+    double sigma_sq = sigma_mu * sigma_mu;
 
     std::uniform_real_distribution<double> unif(0.0, 1.0);
 
@@ -469,9 +527,17 @@ MeanDispersionRegularizedHorseshoeResult mean_dispersion_regularized_horseshoe_m
 
             double log_lam = std::log(lambda_current);
 
+            // CRITICAL: Check log_lam is finite
+            if (!std::isfinite(log_lam)) {
+                log_lam = 0.0;  // Reset to lambda = 1
+            }
+
             // Propose
             std::normal_distribution<double> norm(log_lam, MH_SD_LAMBDA);
             double log_lam_prop = norm(rng_local);
+
+            // CRITICAL: Cap proposal to reasonable range
+            log_lam_prop = std::max(-10.0, std::min(10.0, log_lam_prop));
 
             double lp_old  = log_post_log_lambda(log_lam,      delta, nu_jg, tau_sq_j, sigma_sq, c_sq);
             double lp_prop = log_post_log_lambda(log_lam_prop, delta, nu_jg, tau_sq_j, sigma_sq, c_sq);
@@ -482,8 +548,14 @@ MeanDispersionRegularizedHorseshoeResult mean_dispersion_regularized_horseshoe_m
             if (std::isfinite(log_acc) && std::log(unif(rng_local)) < log_acc) {
                 double lambda_new = std::exp(log_lam_prop);
 
-                // SAFETY CHECK 6: Floor lambda (same as standard horseshoe)
-                lambda_new = std::max(lambda_new, 0.01);
+                // CRITICAL: Both floor and ceiling
+                lambda_new = std::max(0.01, std::min(100.0, lambda_new));
+
+                // CRITICAL: Final validation
+                if (!std::isfinite(lambda_new) || lambda_new <= 0) {
+                    lambda_new = 1.0;
+                }
+
                 rhs_params.lambda[j](g) = lambda_new;
             }
 

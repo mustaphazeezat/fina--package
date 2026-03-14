@@ -36,12 +36,26 @@ void update_tau_makalic_schmidt(
             double delta_jg = std::log(mu_star_safe) - std::log(mu_base_safe);
             if (!std::isfinite(delta_jg)) continue;
 
-            double lambda_jg = std::max(horseshoe_params.lambda[j](g), lambda_floor);
+            double lambda_jg = horseshoe_params.lambda[j](g);
             double sigma_mu = horseshoe_params.sigma_mu;
 
-            // CRITICAL FIX: Keep sum_term as SUM, don't divide by valid_count!
-            sum_term += (delta_jg * delta_jg) / (lambda_jg * lambda_jg * sigma_mu * sigma_mu);
-            valid_count++;
+            // CRITICAL: Validate parameters before division
+            if (!std::isfinite(lambda_jg) || lambda_jg <= 0) {
+                lambda_jg = 1.0;
+            }
+            if (!std::isfinite(sigma_mu) || sigma_mu <= 0) {
+                sigma_mu = 1.0;
+            }
+
+            lambda_jg = std::max(lambda_jg, lambda_floor);
+
+            double term = (delta_jg * delta_jg) / (lambda_jg * lambda_jg * sigma_mu * sigma_mu);
+
+            // CRITICAL: Only add if finite
+            if (std::isfinite(term) && term >= 0) {
+                sum_term += term;
+                valid_count++;
+            }
         }
 
         if (valid_count == 0) {
@@ -49,10 +63,10 @@ void update_tau_makalic_schmidt(
             continue;
         }
 
-        // CRITICAL FIX: No regularization - use sum directly
-        // sum_term is Σ_g (delta² / (lambda² × sigma²))
+        // CRITICAL: Cap sum_term to prevent overflow
+        sum_term = std::min(sum_term, 1e6);
 
-        // SAFETY CHECK
+        // CRITICAL: Check sum_term is valid
         if (!std::isfinite(sum_term) || sum_term < 0) {
             horseshoe_params.tau[j] = 0.5;
             continue;
@@ -61,9 +75,20 @@ void update_tau_makalic_schmidt(
         // Update tau_j using Half-Cauchy(0,1) prior (Makalic-Schmidt)
         // τ²_j | rest ~ InvGamma(G/2 + 1/2, 1/ξ_j + S_j/2)
         double shape_tau = valid_count / 2.0 + 0.5;
-        double rate_tau  = 1.0 / horseshoe_params.xi[j] + sum_term / 2.0;
 
-        // SAFETY CHECK
+        // CRITICAL: Validate xi before using
+        double xi_j = horseshoe_params.xi[j];
+        if (!std::isfinite(xi_j) || xi_j <= 0) {
+            xi_j = 1.0;
+            horseshoe_params.xi[j] = 1.0;
+        }
+
+        double rate_tau  = 1.0 / xi_j + sum_term / 2.0;
+
+        // CRITICAL: Cap rate to prevent overflow
+        rate_tau = std::min(rate_tau, 1e6);
+
+        // CRITICAL: Check rate is valid
         if (!std::isfinite(rate_tau) || rate_tau <= 0) {
             horseshoe_params.tau[j] = 0.5;
             continue;
@@ -144,13 +169,43 @@ MeanDispersionHorseshoeResult mean_dispersion_horseshoe_mcmc(
             double sigma_mu = horseshoe_params.sigma_mu;
             double nu_jg   = horseshoe_params.nu[j](g);
 
+            // CRITICAL SAFETY CHECKS: Validate all parameters before use
+            if (!std::isfinite(tau_j) || tau_j <= 0) {
+                tau_j = 1.0;
+            }
+            if (!std::isfinite(sigma_mu) || sigma_mu <= 0) {
+                sigma_mu = 1.0;
+            }
+            if (!std::isfinite(nu_jg) || nu_jg <= 0) {
+                nu_jg = 1.0;
+                horseshoe_params.nu[j](g) = 1.0;
+            }
+
             // 1/lambda^2 ~ Gamma(1, 1/nu + delta^2/(2*sigma^2*tau^2))
             double rate_lambda = 1.0 / nu_jg +
                                  (delta_jg * delta_jg) /
                                  (2.0 * tau_j * tau_j * sigma_mu * sigma_mu);
 
+            // CRITICAL: Check rate is valid before sampling
+            if (!std::isfinite(rate_lambda) || rate_lambda <= 0) {
+                horseshoe_params.lambda[j](g) = 1.0;
+                horseshoe_params.nu[j](g) = 1.0;
+                continue;
+            }
+
+            // Cap rate to prevent extreme values
+            rate_lambda = std::min(rate_lambda, 1e6);
+
             std::gamma_distribution<double> gamma_dist_lambda(1.0, 1.0 / rate_lambda);
             double lambda_sq_inv = gamma_dist_lambda(rng_local);
+
+            // CRITICAL: Check sampled value is valid
+            if (!std::isfinite(lambda_sq_inv) || lambda_sq_inv <= 0) {
+                horseshoe_params.lambda[j](g) = 1.0;
+                horseshoe_params.nu[j](g) = 1.0;
+                continue;
+            }
+
             double lambda_jg     = 1.0 / std::sqrt(lambda_sq_inv);
 
             // CRITICAL: Both floor and ceiling
@@ -393,7 +448,7 @@ HorseshoeParams initialize_horseshoe_params_empirical(
     params.tau.resize(J, 1.0);
     params.xi.resize(J, 1.0);
 
-    // Estimate Ïƒ_Î¼ from variance of DEVIATIONS from baseline
+    // Estimate  from variance of DEVIATIONS from baseline
     std::vector<double> all_variances;
 
     for (int g = 0; g < G; ++g) {
@@ -427,7 +482,7 @@ HorseshoeParams initialize_horseshoe_params_empirical(
         }
     }
 
-    // Set Ïƒ_Î¼ to median variance
+    // Set median variance
     if (all_variances.size() > 0) {
         std::sort(all_variances.begin(), all_variances.end());
         double median_var = all_variances[all_variances.size() / 2];

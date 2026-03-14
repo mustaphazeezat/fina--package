@@ -606,6 +606,9 @@ std::vector<double> gene_hs_sigma_mu_sq_output;
                 rhs_params = rhs_output.rhs_params;
 
             } else if (use_horseshoe) {
+
+
+
                 // Standard Horseshoe
                 auto hs_output = mean_dispersion_horseshoe_mcmc(
                     mu_star_1_J_new, phi_star_1_J_new, mu_baseline,
