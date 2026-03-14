@@ -248,34 +248,17 @@ NormHDPResult normHDP_mcmc(
     RegularizedHorseshoeParams reg_horseshoe_params;
 
 
-	if (use_sparse_prior) {
-        if (empirical) {
-            horseshoe_params = initialize_horseshoe_params_empirical(
-                J, G,
-                mu_baseline,
-                mu_star_1_J_initial
-            );
-
-        } else {
-            horseshoe_params = initialize_horseshoe_params(J, G);
-
-        }
-    }
-
-    if (use_reg_horseshoe) {
-        if (empirical) {
-            reg_horseshoe_params = initialize_regularized_horseshoe_params_empirical(
-                J, G, p_0,
-                mu_baseline,
-                mu_star_1_J_initial
-            );
+	horseshoe_params     = initialize_horseshoe_params(J, G);
+	reg_horseshoe_params = initialize_regularized_horseshoe_params(J, G, p_0);
+	spike_slab_params    = initialize_spike_slab_params(J, G);
 
 
-        } else {
-            reg_horseshoe_params = initialize_regularized_horseshoe_params(J, G, p_0);
-
-        }
-    }
+if (use_sparse_prior && empirical) {
+    horseshoe_params = initialize_horseshoe_params_empirical(J, G, mu_baseline, mu_star_1_J_initial);
+}
+if (use_reg_horseshoe && empirical) {
+    reg_horseshoe_params = initialize_regularized_horseshoe_params_empirical(J, G, p_0, mu_baseline, mu_star_1_J_initial);
+}
 
     // Initialize spike-slab parameters (if using)
     if (use_spike_slab) {
@@ -285,7 +268,14 @@ NormHDPResult normHDP_mcmc(
 
 
     // ============ Prepare Outputs ============
-    int num_saved = (number_iter - burn_in) / thinning;
+    int num_saved = 0;
+    if (number_iter > burn_in) {
+        num_saved = ((number_iter - burn_in - 1) / thinning) + 1;
+    }
+
+    if (num_saved <= 0) {
+        Rcpp::stop("No samples to save with current parameters");
+    }
 
     NormHDPResult result;
     result.D = D;

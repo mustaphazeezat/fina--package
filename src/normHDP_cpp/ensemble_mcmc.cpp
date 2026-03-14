@@ -145,7 +145,10 @@ ChainResult run_single_chain_safe(
 template<typename T>
 void compute_mean_sd(const std::vector<T>& samples, T& mean, T& sd) {
     int n = samples.size();
-    if (n == 0) return;
+    if (n == 0) {
+
+        return;
+    }
 
     mean = samples[0];
     for (int i = 1; i < n; ++i) {
@@ -153,8 +156,15 @@ void compute_mean_sd(const std::vector<T>& samples, T& mean, T& sd) {
     }
     mean /= n;
 
-    sd = (samples[0] - mean).cwiseProduct(samples[0] - mean);
-    for (int i = 1; i < n; ++i) {
+    // Zero-initialize sd with correct dimensions
+    sd = T::Zero(mean.rows(), mean.cols());  // for Matrix types
+
+    if (n == 1) {
+        // sd stays zero — only one sample, variance undefined
+        return;
+    }
+
+    for (int i = 0; i < n; ++i) {
         sd += (samples[i] - mean).cwiseProduct(samples[i] - mean);
     }
     sd = (sd / (n - 1)).cwiseSqrt();
@@ -162,11 +172,13 @@ void compute_mean_sd(const std::vector<T>& samples, T& mean, T& sd) {
 
 void compute_scalar_mean_sd(const std::vector<double>& samples, double& mean, double& sd) {
     int n = samples.size();
-    if (n == 0) return;
+    if (n == 0) { mean = 0.0; sd = 0.0; return; }
 
     mean = 0.0;
     for (double s : samples) mean += s;
     mean /= n;
+
+    if (n == 1) { sd = 0.0; return; }  // ← add this
 
     sd = 0.0;
     for (double s : samples) sd += (s - mean) * (s - mean);
