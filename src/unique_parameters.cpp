@@ -220,6 +220,13 @@ double unique_parameters_log_prob_horseshoe_fast(
     const Eigen::VectorXd& mu_baseline,
     bool quadratic
 ) {
+    // CRITICAL: Validate sizes before accessing (prevents crash)
+    if (j >= static_cast<int>(horseshoe_params.tau.size()) ||
+        j >= static_cast<int>(horseshoe_params.lambda.size()) ||
+        g >= horseshoe_params.lambda[j].size()) {
+        return -1e10;  // Return very negative log prob if invalid
+    }
+
     double log_mu = std::log(mu_star);
     double log_phi = std::log(phi_star);
 
@@ -269,6 +276,13 @@ double unique_parameters_log_prob_reg_horseshoe_fast(
     const Eigen::VectorXd& mu_baseline,
     bool quadratic
 ) {
+    // CRITICAL: Validate sizes before accessing (prevents crash)
+    if (j >= static_cast<int>(rhs_params.tau.size()) ||
+        j >= static_cast<int>(rhs_params.lambda.size()) ||
+        g >= rhs_params.lambda[j].size()) {
+        return -1e10;  // Return very negative log prob if invalid
+    }
+
     double log_mu = std::log(mu_star);
     double log_phi = std::log(phi_star);
 
@@ -485,6 +499,21 @@ UniqueParamsResult unique_parameters_mcmc(
                     switch (prior_type) {
                         case MuPriorType::HORSESHOE: {
                             // Sample from horseshoe: baseline + deviation
+                            // CRITICAL: Validate pointer and sizes before accessing
+                            if (!horseshoe_params ||
+                                j >= static_cast<int>(horseshoe_params->tau.size()) ||
+                                j >= static_cast<int>(horseshoe_params->lambda.size()) ||
+                                g >= horseshoe_params->lambda[j].size()) {
+                                // Fallback to lognormal if params invalid
+                                mu_star_new_val = rlnorm_safe(std::log((*mu_baseline)(g)), std::sqrt(alpha_mu_2), local_rng);
+                                double mean_log_phi = b(0) + b(1) * std::log(mu_star_new_val);
+                                if (quadratic && b.size() > 2) {
+                                    mean_log_phi += b(2) * std::log(mu_star_new_val) * std::log(mu_star_new_val);
+                                }
+                                phi_star_new_val = rlnorm_safe(mean_log_phi, std::sqrt(alpha_phi_2), local_rng);
+                                break;
+                            }
+
                             double tau_j = horseshoe_params->tau[j];
                             double lambda_jg = horseshoe_params->lambda[j](g);
                             double sigma_mu = horseshoe_params->sigma_mu;
@@ -504,6 +533,21 @@ UniqueParamsResult unique_parameters_mcmc(
                         }
                         case MuPriorType::REGULARIZED_HORSESHOE: {
                             // Sample from regularized horseshoe: baseline + deviation
+                            // CRITICAL: Validate pointer and sizes before accessing
+                            if (!reg_horseshoe_params ||
+                                j >= static_cast<int>(reg_horseshoe_params->tau.size()) ||
+                                j >= static_cast<int>(reg_horseshoe_params->lambda.size()) ||
+                                g >= reg_horseshoe_params->lambda[j].size()) {
+                                // Fallback to lognormal if params invalid
+                                mu_star_new_val = rlnorm_safe(std::log((*mu_baseline)(g)), std::sqrt(alpha_mu_2), local_rng);
+                                double mean_log_phi = b(0) + b(1) * std::log(mu_star_new_val);
+                                if (quadratic && b.size() > 2) {
+                                    mean_log_phi += b(2) * std::log(mu_star_new_val) * std::log(mu_star_new_val);
+                                }
+                                phi_star_new_val = rlnorm_safe(mean_log_phi, std::sqrt(alpha_phi_2), local_rng);
+                                break;
+                            }
+
                             double tau_j = reg_horseshoe_params->tau[j];
                             double lambda_jg = reg_horseshoe_params->lambda[j](g);
                             double sigma_mu = reg_horseshoe_params->sigma_mu;

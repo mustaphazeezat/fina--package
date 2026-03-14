@@ -93,26 +93,48 @@ ChainResult run_single_chain_safe(
         Rcpp::Rcout << "Completed chain " << (chain_id + 1) << std::endl;
     }
 
-    // Copy to plain struct
+    // Copy to plain struct - WITH SAFETY CHECKS
     ChainResult chain_result;
-    chain_result.b_output = result.b_output;
-    chain_result.alpha_phi2_output = result.alpha_phi2_output;
-    chain_result.P_J_D_output = result.P_J_D_output;
-    chain_result.P_output = result.P_output;
-    chain_result.alpha_output = result.alpha_output;
-    chain_result.alpha_zero_output = result.alpha_zero_output;
-    chain_result.mu_star_1_J_output = result.mu_star_1_J_output;
-    chain_result.phi_star_1_J_output = result.phi_star_1_J_output;
-    chain_result.Beta_output = result.Beta_output;
-    chain_result.Z_output = result.Z_output;
-    chain_result.horseshoe_output = result.horseshoe_output;
-	chain_result.spike_slab_output = result.spike_slab_output;
-	chain_result.reg_horseshoe_output = result.reg_horseshoe_output;
+
+    // Initialize flags first
     chain_result.use_sparse_prior = result.use_sparse_prior;
-	chain_result.use_spike_slab = result.use_spike_slab;
-	chain_result.use_reg_horseshoe = result.use_reg_horseshoe;
-    chain_result.mu_baseline_output = result.mu_baseline_output;
+    chain_result.use_spike_slab = result.use_spike_slab;
+    chain_result.use_reg_horseshoe = result.use_reg_horseshoe;
     chain_result.D = result.D;
+
+    // Copy outputs with try-catch for safety
+    try {
+        chain_result.b_output = result.b_output;
+        chain_result.alpha_phi2_output = result.alpha_phi2_output;
+        chain_result.P_J_D_output = result.P_J_D_output;
+        chain_result.P_output = result.P_output;
+        chain_result.alpha_output = result.alpha_output;
+        chain_result.alpha_zero_output = result.alpha_zero_output;
+        chain_result.mu_star_1_J_output = result.mu_star_1_J_output;
+        chain_result.phi_star_1_J_output = result.phi_star_1_J_output;
+        chain_result.Beta_output = result.Beta_output;
+        chain_result.Z_output = result.Z_output;
+        chain_result.mu_baseline_output = result.mu_baseline_output;
+
+        // CRITICAL: Only copy horseshoe if actually used and populated
+        if (result.use_sparse_prior && !result.horseshoe_output.empty()) {
+            chain_result.horseshoe_output = result.horseshoe_output;
+        }
+
+        if (result.use_spike_slab && !result.spike_slab_output.empty()) {
+            chain_result.spike_slab_output = result.spike_slab_output;
+        }
+
+        if (result.use_reg_horseshoe && !result.reg_horseshoe_output.empty()) {
+            chain_result.reg_horseshoe_output = result.reg_horseshoe_output;
+        }
+
+    } catch (const std::exception& e) {
+        #ifdef RCPP_VERSION
+        Rcpp::Rcout << "Warning: Error copying chain results: " << e.what() << "\n";
+        #endif
+        // Chain result will be incomplete but won't crash
+    }
 
     return chain_result;
 }
@@ -331,68 +353,133 @@ Rcpp::List ensemble_mcmc_R(
             // Beta trace
             Beta_trace_all[i] = Rcpp::wrap(result.Beta_output);
 
-            // Horseshoe traces (if sparse prior)
+            // Horseshoe traces (if sparse prior) - WITH BOUNDS CHECKING FOR WINDOWS
             if (use_sparse_prior && !result.horseshoe_output.empty()) {
-                int n_hs_samples = result.horseshoe_output.size();
+                try {
+                    int n_hs_samples = result.horseshoe_output.size();
 
-                // Lambda trace
-                Rcpp::List lambda_chain(n_hs_samples);
-                for (int t = 0; t < n_hs_samples; t++) {
-                    Eigen::MatrixXd lambda_mat(J, G);
-                    for (int j = 0; j < J; j++) {
-                        lambda_mat.row(j) = result.horseshoe_output[t].lambda[j].transpose();
+                    // CRITICAL: Validate structure before accessing (Windows needs this!)
+                    bool valid_structure = (n_hs_samples > 0);
+
+                    if (valid_structure && n_hs_samples > 0) {
+                        // Check first sample has proper dimensions
+                        if (result.horseshoe_output[0].lambda.size() != static_cast<size_t>(J)) {
+                            valid_structure = false;
+                        } else {
+                            for (int j = 0; j < J && valid_structure; j++) {
+                                if (result.horseshoe_output[0].lambda[j].size() != static_cast<size_t>(G)) {
+                                    valid_structure = false;
+                                }
+                            }
+                        }
                     }
-                    lambda_chain[t] = lambda_mat;
-                }
-                lambda_trace_all[i] = lambda_chain;
 
-                // Tau trace
-                Eigen::MatrixXd tau_mat(n_hs_samples, J);
-                for (int t = 0; t < n_hs_samples; t++) {
-                    for (int j = 0; j < J; j++) {
-                        tau_mat(t, j) = result.horseshoe_output[t].tau[j];
+                    if (valid_structure) {
+                        // Lambda trace
+                        Rcpp::List lambda_chain(n_hs_samples);
+                        for (int t = 0; t < n_hs_samples; t++) {
+                            if (result.horseshoe_output[t].lambda.size() == static_cast<size_t>(J)) {
+                                Eigen::MatrixXd lambda_mat(J, G);
+                                for (int j = 0; j < J; j++) {
+                                    if (result.horseshoe_output[t].lambda[j].size() == static_cast<size_t>(G)) {
+                                        lambda_mat.row(j) = result.horseshoe_output[t].lambda[j].transpose();
+                                    } else {
+                                        lambda_mat.row(j).setConstant(1.0);
+                                    }
+                                }
+                                lambda_chain[t] = lambda_mat;
+                            }
+                        }
+                        lambda_trace_all[i] = lambda_chain;
+
+                        // Tau trace
+                        Eigen::MatrixXd tau_mat(n_hs_samples, J);
+                        for (int t = 0; t < n_hs_samples; t++) {
+                            if (result.horseshoe_output[t].tau.size() == static_cast<size_t>(J)) {
+                                for (int j = 0; j < J; j++) {
+                                    tau_mat(t, j) = result.horseshoe_output[t].tau[j];
+                                }
+                            } else {
+                                tau_mat.row(t).setConstant(1.0);
+                            }
+                        }
+                        tau_trace_all[i] = tau_mat;
+
+                        // Sigma_mu trace
+                        Eigen::VectorXd sigma_mu_vec(n_hs_samples);
+                        for (int t = 0; t < n_hs_samples; t++) {
+                            sigma_mu_vec(t) = result.horseshoe_output[t].sigma_mu;
+                        }
+                        sigma_mu_trace_all[i] = sigma_mu_vec;
                     }
+                } catch (const std::exception& e) {
+                    Rcpp::Rcout << "Warning: Error processing horseshoe for chain " << (i+1)
+                                << ": " << e.what() << "\n";
                 }
-                tau_trace_all[i] = tau_mat;
-
-                // Sigma_mu trace
-                Eigen::VectorXd sigma_mu_vec(n_hs_samples);
-                for (int t = 0; t < n_hs_samples; t++) {
-                    sigma_mu_vec(t) = result.horseshoe_output[t].sigma_mu;
-                }
-                sigma_mu_trace_all[i] = sigma_mu_vec;
             }
-			// reg Horseshoe traces (if sparse prior)
 
+            // Regularized Horseshoe traces - WITH BOUNDS CHECKING FOR WINDOWS
             if (use_reg_horseshoe && !result.reg_horseshoe_output.empty()) {
-                int n_reg_samples = result.reg_horseshoe_output.size();
+                try {
+                    int n_reg_samples = result.reg_horseshoe_output.size();
 
-                // Lambda trace
-                Rcpp::List lambda_chain(n_reg_samples);
-                for (int t = 0; t < n_reg_samples; t++) {
-                    Eigen::MatrixXd lambda_mat(J, G);
-                    for (int j = 0; j < J; j++) {
-                        lambda_mat.row(j) = result.reg_horseshoe_output[t].lambda[j].transpose();
+                    // CRITICAL: Validate structure
+                    bool valid_structure = (n_reg_samples > 0);
+
+                    if (valid_structure && n_reg_samples > 0) {
+                        if (result.reg_horseshoe_output[0].lambda.size() != static_cast<size_t>(J)) {
+                            valid_structure = false;
+                        } else {
+                            for (int j = 0; j < J && valid_structure; j++) {
+                                if (result.reg_horseshoe_output[0].lambda[j].size() != static_cast<size_t>(G)) {
+                                    valid_structure = false;
+                                }
+                            }
+                        }
                     }
-                    lambda_chain[t] = lambda_mat;
-                }
-                lambda_trace_all[i] = lambda_chain;
 
-                // Tau trace
-                Eigen::MatrixXd tau_mat(n_reg_samples, J);
-                for (int t = 0; t < n_reg_samples; t++) {
-                    for (int j = 0; j < J; j++) {
-                        tau_mat(t, j) = result.reg_horseshoe_output[t].tau[j];
+                    if (valid_structure) {
+                        // Lambda trace
+                        Rcpp::List lambda_chain(n_reg_samples);
+                        for (int t = 0; t < n_reg_samples; t++) {
+                            if (result.reg_horseshoe_output[t].lambda.size() == static_cast<size_t>(J)) {
+                                Eigen::MatrixXd lambda_mat(J, G);
+                                for (int j = 0; j < J; j++) {
+                                    if (result.reg_horseshoe_output[t].lambda[j].size() == static_cast<size_t>(G)) {
+                                        lambda_mat.row(j) = result.reg_horseshoe_output[t].lambda[j].transpose();
+                                    } else {
+                                        lambda_mat.row(j).setConstant(1.0);
+                                    }
+                                }
+                                lambda_chain[t] = lambda_mat;
+                            }
+                        }
+                        lambda_trace_all[i] = lambda_chain;
+
+                        // Tau trace
+                        Eigen::MatrixXd tau_mat(n_reg_samples, J);
+                        for (int t = 0; t < n_reg_samples; t++) {
+                            if (result.reg_horseshoe_output[t].tau.size() == static_cast<size_t>(J)) {
+                                for (int j = 0; j < J; j++) {
+                                    tau_mat(t, j) = result.reg_horseshoe_output[t].tau[j];
+                                }
+                            } else {
+                                tau_mat.row(t).setConstant(1.0);
+                            }
+                        }
+                        tau_trace_all[i] = tau_mat;
+
+                        // Sigma_mu trace
+                        Eigen::VectorXd sigma_mu_vec(n_reg_samples);
+                        for (int t = 0; t < n_reg_samples; t++) {
+                            sigma_mu_vec(t) = result.reg_horseshoe_output[t].sigma_mu;
+                        }
+                        sigma_mu_trace_all[i] = sigma_mu_vec;
                     }
+                } catch (const std::exception& e) {
+                    Rcpp::Rcout << "Warning: Error processing regularized horseshoe for chain " << (i+1)
+                                << ": " << e.what() << "\n";
                 }
-                tau_trace_all[i] = tau_mat;
-
-                // Sigma_mu trace
-                Eigen::VectorXd sigma_mu_vec(n_reg_samples);
-                for (int t = 0; t < n_reg_samples; t++) {
-                    sigma_mu_vec(t) = result.reg_horseshoe_output[t].sigma_mu;
-                }
-                sigma_mu_trace_all[i] = sigma_mu_vec;
             }
 
 

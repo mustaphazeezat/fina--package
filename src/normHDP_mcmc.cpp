@@ -238,41 +238,30 @@ NormHDPResult normHDP_mcmc(
     // For lognormal prior, baseline not needed (but set to avoid issues)
     mu_baseline = mu_estimate;
 }
-     // ============ Initialize Horseshoe Parameters (if using sparse prior) ============
-	SpikeSlabParams spike_slab_params;
+    // ============ Initialize ALL Parameters (prevent uninitialized on Windows) ============
+    SpikeSlabParams spike_slab_params;
     HorseshoeParams horseshoe_params;
-    RegularizedHorseshoeParams reg_horseshoe_params;  // ← ADD THIS
+    RegularizedHorseshoeParams reg_horseshoe_params;
 
-    if (use_sparse_prior) {
-        if (empirical) {
-            horseshoe_params = initialize_horseshoe_params_empirical(
-                J, G,
-                mu_baseline,           // ← BASELINE (overall mean)
-                mu_star_1_J_initial    // ← INITIAL cluster-specific estimates
-            );
+    // CRITICAL: ALWAYS initialize to prevent Windows crashes from garbage values
+    // Even if not using horseshoe, we need valid (empty) params for safety
+    horseshoe_params = initialize_horseshoe_params(J, G);
+    reg_horseshoe_params = initialize_regularized_horseshoe_params(J, G, p_0);
 
-        } else {
-            horseshoe_params = initialize_horseshoe_params(J, G);
-
-        }
+    // Override with empirical initialization if requested
+    if (use_sparse_prior && empirical) {
+        horseshoe_params = initialize_horseshoe_params_empirical(
+            J, G, mu_baseline, mu_star_1_J_initial
+        );
     }
 
-    if (use_reg_horseshoe) {
-        if (empirical) {
-            reg_horseshoe_params = initialize_regularized_horseshoe_params_empirical(
-                J, G, p_0,
-                mu_baseline,           // ← BASELINE (overall mean)
-                mu_star_1_J_initial    // ← INITIAL cluster-specific estimates
-            );
-
-
-        } else {
-            reg_horseshoe_params = initialize_regularized_horseshoe_params(J, G, p_0);
-
-        }
+    if (use_reg_horseshoe && empirical) {
+        reg_horseshoe_params = initialize_regularized_horseshoe_params_empirical(
+            J, G, p_0, mu_baseline, mu_star_1_J_initial
+        );
     }
-	// Initialize spike-slab parameters (if using)
 
+    // Initialize spike-slab parameters (if using)
     if (use_spike_slab) {
         spike_slab_params = initialize_spike_slab_params(J, G);
         std::cout << "Using spike-and-slab prior for cluster-specific means\n";
