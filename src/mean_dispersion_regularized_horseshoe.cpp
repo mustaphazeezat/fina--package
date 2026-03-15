@@ -4,10 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
-
-#ifdef RCPP_VERSION
-#include <Rcpp.h>
-#endif
+#include <stdexcept>
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -438,12 +435,10 @@ MeanDispersionRegularizedHorseshoeResult mean_dispersion_regularized_horseshoe_m
     const double c_sq = rhs_params.c_squared;
 
     // CRITICAL: Validate c_squared
+    // NOTE: Must use throw, NOT Rcpp::stop — this function runs inside threads
+    // and Rcpp::stop calls longjmp which causes immediate fatal crash in a thread.
     if (!std::isfinite(c_sq) || c_sq <= 0) {
-        #ifdef RCPP_VERSION
-        Rcpp::stop("Invalid c_squared value in regularized horseshoe!");
-        #else
         throw std::runtime_error("Invalid c_squared value in regularized horseshoe!");
-        #endif
     }
 
     double sigma_mu = rhs_params.sigma_mu;

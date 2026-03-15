@@ -194,8 +194,20 @@ MeanDispersionHorseshoeResult mean_dispersion_horseshoe_mcmc(
 
             // 1/nu ~ Gamma(1, 1 + 1/lambda^2)
             double rate_nu = 1.0 + 1.0 / (lambda_jg * lambda_jg);
-            std::gamma_distribution<double> gamma_dist_nu(1.0, 1.0 / rate_nu);
-            horseshoe_params.nu[j](g) = 1.0 / gamma_dist_nu(rng_local);
+
+            if (std::isfinite(rate_nu) && rate_nu > 0) {
+                std::gamma_distribution<double> gamma_dist_nu(1.0, 1.0 / rate_nu);
+                double nu_inv = gamma_dist_nu(rng_local);
+
+                // CRITICAL: Check sampled value
+                if (std::isfinite(nu_inv) && nu_inv > 0) {
+                    horseshoe_params.nu[j](g) = 1.0 / nu_inv;
+                } else {
+                    horseshoe_params.nu[j](g) = 1.0;  // Safe default
+                }
+            } else {
+                horseshoe_params.nu[j](g) = 1.0;  // Safe default
+            }
         }
     }
 
@@ -231,12 +243,23 @@ MeanDispersionHorseshoeResult mean_dispersion_horseshoe_mcmc(
         double shape_sigma = a_sigma + valid_total / 2.0;
         double rate_sigma = b_sigma + sum_all / 2.0;
 
-        std::gamma_distribution<double> gamma_dist_sigma(shape_sigma, 1.0 / rate_sigma);
-        double sigma_mu_sq_inv = gamma_dist_sigma(rng_local);
-        horseshoe_params.sigma_mu = 1.0 / std::sqrt(sigma_mu_sq_inv);
+        // CRITICAL: Validate gamma parameters
+        if (!std::isfinite(shape_sigma) || shape_sigma <= 0 ||
+            !std::isfinite(rate_sigma) || rate_sigma <= 0) {
+            horseshoe_params.sigma_mu = 1.0;
+        } else {
+            std::gamma_distribution<double> gamma_dist_sigma(shape_sigma, 1.0 / rate_sigma);
+            double sigma_mu_sq_inv = gamma_dist_sigma(rng_local);
 
-        // Bounds
-        horseshoe_params.sigma_mu = std::max(0.1, std::min(3.0, horseshoe_params.sigma_mu));
+            // CRITICAL: Check sampled value before sqrt and division
+            if (std::isfinite(sigma_mu_sq_inv) && sigma_mu_sq_inv > 0) {
+                horseshoe_params.sigma_mu = 1.0 / std::sqrt(sigma_mu_sq_inv);
+                // Bounds
+                horseshoe_params.sigma_mu = std::max(0.1, std::min(3.0, horseshoe_params.sigma_mu));
+            } else {
+                horseshoe_params.sigma_mu = 1.0;  // Safe default
+            }
+        }
     }
 
     // ============================================================

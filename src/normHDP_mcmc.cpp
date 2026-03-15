@@ -15,6 +15,7 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 
 NormHDPResult normHDP_mcmc(
     const std::vector<Eigen::MatrixXd>& Y,
@@ -274,7 +275,7 @@ if (use_reg_horseshoe && empirical) {
     }
 
     if (num_saved <= 0) {
-        Rcpp::stop("No samples to save with current parameters");
+        throw std::runtime_error("No samples to save with current parameters");
     }
 
     NormHDPResult result;

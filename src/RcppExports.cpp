@@ -74,6 +74,37 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// normHDP_mcmc_R
+Rcpp::List normHDP_mcmc_R(Rcpp::List Y_list, int J, int chain_length, int thinning, bool empirical, int burn_in, bool quadratic, int iter_update, double beta_mean, double alpha_mu_2, double adaptive_prop, bool print_Z, bool save_only_z, bool use_sparse_prior, bool use_spike_slab, bool use_reg_horseshoe, double p_0, Rcpp::NumericVector baynorm_mu_estimate, Rcpp::NumericVector baynorm_phi_estimate, Rcpp::List baynorm_beta_list, int seed);
+RcppExport SEXP _normHDPcpp_normHDP_mcmc_R(SEXP Y_listSEXP, SEXP JSEXP, SEXP chain_lengthSEXP, SEXP thinningSEXP, SEXP empiricalSEXP, SEXP burn_inSEXP, SEXP quadraticSEXP, SEXP iter_updateSEXP, SEXP beta_meanSEXP, SEXP alpha_mu_2SEXP, SEXP adaptive_propSEXP, SEXP print_ZSEXP, SEXP save_only_zSEXP, SEXP use_sparse_priorSEXP, SEXP use_spike_slabSEXP, SEXP use_reg_horseshoeSEXP, SEXP p_0SEXP, SEXP baynorm_mu_estimateSEXP, SEXP baynorm_phi_estimateSEXP, SEXP baynorm_beta_listSEXP, SEXP seedSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::List >::type Y_list(Y_listSEXP);
+    Rcpp::traits::input_parameter< int >::type J(JSEXP);
+    Rcpp::traits::input_parameter< int >::type chain_length(chain_lengthSEXP);
+    Rcpp::traits::input_parameter< int >::type thinning(thinningSEXP);
+    Rcpp::traits::input_parameter< bool >::type empirical(empiricalSEXP);
+    Rcpp::traits::input_parameter< int >::type burn_in(burn_inSEXP);
+    Rcpp::traits::input_parameter< bool >::type quadratic(quadraticSEXP);
+    Rcpp::traits::input_parameter< int >::type iter_update(iter_updateSEXP);
+    Rcpp::traits::input_parameter< double >::type beta_mean(beta_meanSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha_mu_2(alpha_mu_2SEXP);
+    Rcpp::traits::input_parameter< double >::type adaptive_prop(adaptive_propSEXP);
+    Rcpp::traits::input_parameter< bool >::type print_Z(print_ZSEXP);
+    Rcpp::traits::input_parameter< bool >::type save_only_z(save_only_zSEXP);
+    Rcpp::traits::input_parameter< bool >::type use_sparse_prior(use_sparse_priorSEXP);
+    Rcpp::traits::input_parameter< bool >::type use_spike_slab(use_spike_slabSEXP);
+    Rcpp::traits::input_parameter< bool >::type use_reg_horseshoe(use_reg_horseshoeSEXP);
+    Rcpp::traits::input_parameter< double >::type p_0(p_0SEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type baynorm_mu_estimate(baynorm_mu_estimateSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type baynorm_phi_estimate(baynorm_phi_estimateSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type baynorm_beta_list(baynorm_beta_listSEXP);
+    Rcpp::traits::input_parameter< int >::type seed(seedSEXP);
+    rcpp_result_gen = Rcpp::wrap(normHDP_mcmc_R(Y_list, J, chain_length, thinning, empirical, burn_in, quadratic, iter_update, beta_mean, alpha_mu_2, adaptive_prop, print_Z, save_only_z, use_sparse_prior, use_spike_slab, use_reg_horseshoe, p_0, baynorm_mu_estimate, baynorm_phi_estimate, baynorm_beta_list, seed));
+    return rcpp_result_gen;
+END_RCPP
+}
 // rcpp_hello_world
 List rcpp_hello_world();
 RcppExport SEXP _normHDPcpp_rcpp_hello_world() {
@@ -88,6 +119,7 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_normHDPcpp_ensemble_mcmc_R", (DL_FUNC) &_normHDPcpp_ensemble_mcmc_R, 22},
     {"_normHDPcpp_normHDP_mcmc_fixed_z", (DL_FUNC) &_normHDPcpp_normHDP_mcmc_fixed_z, 21},
+    {"_normHDPcpp_normHDP_mcmc_R", (DL_FUNC) &_normHDPcpp_normHDP_mcmc_R, 21},
     {"_normHDPcpp_rcpp_hello_world", (DL_FUNC) &_normHDPcpp_rcpp_hello_world, 0},
     {NULL, NULL, 0}
 };

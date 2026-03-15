@@ -107,30 +107,35 @@ AllocationResult allocation_variables_mcmc(
             seeds[i] = rd() + i;
         }
 
-        // Launch threads
-        for (int i = 0; i < actual_chunks; ++i) {
-            int start_col = i * chunk_size;
-            int end_col = std::min(start_col + chunk_size, C_d);
-            int this_chunk_size = end_col - start_col;
+        // Launch threads (or run inline if only one chunk — avoids
+        // spawning/joining a thread on every MCMC iteration when num_cores=1,
+        // which would exhaust OS thread handles across 100 chains × 100 iters)
+        if (actual_chunks == 1) {
+            chunk_results[0] = process_chunk(
+                Y[d], mu_star_1_J, phi_star_1_J,
+                Beta[d], P_J_D.col(d), seeds[0]
+            );
+        } else {
+            for (int i = 0; i < actual_chunks; ++i) {
+                int start_col = i * chunk_size;
+                int end_col = std::min(start_col + chunk_size, C_d);
+                int this_chunk_size = end_col - start_col;
 
-            // Extract chunk
-            Eigen::MatrixXd Y_chunk = Y[d].middleCols(start_col, this_chunk_size);
-            Eigen::VectorXd Beta_chunk = Beta[d].segment(start_col, this_chunk_size);
-            Eigen::VectorXd P_J = P_J_D.col(d);
+                Eigen::MatrixXd Y_chunk = Y[d].middleCols(start_col, this_chunk_size);
+                Eigen::VectorXd Beta_chunk = Beta[d].segment(start_col, this_chunk_size);
+                Eigen::VectorXd P_J = P_J_D.col(d);
 
-            threads.emplace_back([&chunk_results, i, Y_chunk,
-                                 mu_star_1_J, phi_star_1_J,
-                                 Beta_chunk, P_J, seeds]() {
-                chunk_results[i] = process_chunk(
-                    Y_chunk, mu_star_1_J, phi_star_1_J,
-                    Beta_chunk, P_J, seeds[i]
-                );
-            });
-        }
+                threads.emplace_back([&chunk_results, i, Y_chunk,
+                                     mu_star_1_J, phi_star_1_J,
+                                     Beta_chunk, P_J, seeds]() {
+                    chunk_results[i] = process_chunk(
+                        Y_chunk, mu_star_1_J, phi_star_1_J,
+                        Beta_chunk, P_J, seeds[i]
+                    );
+                });
+            }
 
-        // Wait for all threads
-        for (auto& t : threads) {
-            t.join();
+            for (auto& t : threads) t.join();
         }
 
         // Combine results

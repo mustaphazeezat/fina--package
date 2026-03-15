@@ -9,6 +9,10 @@ normHDP_mcmc_fixed_z <- function(Y, cluster_estimates, number_iter, thinning = 5
     .Call(`_normHDPcpp_normHDP_mcmc_fixed_z`, Y, cluster_estimates, number_iter, thinning, empirical, burn_in, quadratic, iter_update, beta_mean, alpha_mu_2, adaptive_prop, num_cores, baynorm_mu_estimate, baynorm_phi_estimate, baynorm_beta, use_horseshoe, use_reg_horseshoe, use_spike_slab, use_gene_horseshoe, p_0, use_marker_selection)
 }
 
+normHDP_mcmc_R <- function(Y_list, J, chain_length, thinning, empirical, burn_in, quadratic, iter_update, beta_mean, alpha_mu_2, adaptive_prop, print_Z, save_only_z, use_sparse_prior, use_spike_slab, use_reg_horseshoe, p_0, baynorm_mu_estimate, baynorm_phi_estimate, baynorm_beta_list, seed = -1L) {
+    .Call(`_normHDPcpp_normHDP_mcmc_R`, Y_list, J, chain_length, thinning, empirical, burn_in, quadratic, iter_update, beta_mean, alpha_mu_2, adaptive_prop, print_Z, save_only_z, use_sparse_prior, use_spike_slab, use_reg_horseshoe, p_0, baynorm_mu_estimate, baynorm_phi_estimate, baynorm_beta_list, seed)
+}
+
 rcpp_hello_world <- function() {
     .Call(`_normHDPcpp_rcpp_hello_world`)
 }
