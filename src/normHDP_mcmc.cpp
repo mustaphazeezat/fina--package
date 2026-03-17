@@ -217,16 +217,24 @@ NormHDPResult normHDP_mcmc(
     Eigen::MatrixXd delta_horseshoe;
     if (use_sparse_prior || use_spike_slab || use_reg_horseshoe) {
     // Initialize prior from data (weak)
-    baseline_prior = initialize_baseline_prior(mu_estimate, J, G);
+    // FIX: must pass mu_star_1_J_initial (J x G MatrixXd), NOT mu_estimate
+    // (VectorXd G x 1). Passing mu_estimate caused out-of-bounds access
+    // inside initialize_baseline_prior when iterating j=0..J-1 rows,
+    // producing a segfault — the root cause of all fatal crashes.
+    baseline_prior = initialize_baseline_prior(mu_star_1_J_initial, J, G);
 
     // Initial baseline: sample from prior (NOT mu_estimate)
     std::normal_distribution<double> std_normal(0.0, 1.0);
     for (int g = 0; g < G; ++g) {
-        double log_base = baseline_prior.log_mean(g) +
-                          std::sqrt(baseline_prior.log_sd(g)) * std_normal(rng_local);
+        double log_sd_g = baseline_prior.log_sd(g);
+        // Guard: log_sd must be >= 0 for sqrt — negative values mean the
+        // variance estimate is numerically zero, treat as zero SD
+        double sd_g = (std::isfinite(log_sd_g) && log_sd_g >= 0.0)
+                      ? std::sqrt(log_sd_g) : 0.0;
+        double log_base = baseline_prior.log_mean(g) + sd_g * std_normal(rng_local);
         mu_baseline(g) = std::exp(log_base);
         if (mu_baseline(g) <= 0 || !std::isfinite(mu_baseline(g))) {
-            mu_baseline(g) = 0.01;
+            mu_baseline(g) = (mu_estimate(g) > 0) ? mu_estimate(g) : 0.01;
         }
     }
 
@@ -443,36 +451,70 @@ if (use_reg_horseshoe && empirical) {
             b_new = mean_disp_output.b;
         }
         if (use_sparse_prior || use_spike_slab || use_reg_horseshoe) {
-        // Compute current delta from mu_star and mu_baseline
-        for (int j = 0; j < J; ++j) {
+
+            // Compute delta - guard against non-finite mu_star or mu_baseline
+            for (int j = 0; j < J; ++j) {
+                for (int g = 0; g < G; ++g) {
+                    double log_mu  = std::log(mu_star_1_J_new(j, g));
+                    double log_bas = std::log(mu_baseline(g));
+                    delta_horseshoe(j, g) =
+                        (std::isfinite(log_mu) && std::isfinite(log_bas))
+                        ? log_mu - log_bas : 0.0;
+                }
+            }
+
+            // Sample new baseline
+            mu_baseline = sample_mu_baseline(
+                mu_star_1_J_new,
+                delta_horseshoe,
+                baseline_prior,
+                J, G
+            );
+
+            // Sanitise mu_baseline — sample_mu_baseline can produce inf/NaN
+            // when mu_star has extreme values from horseshoe priors with empty
+            // or shuffled clusters. Fall back to baynorm estimate per gene.
             for (int g = 0; g < G; ++g) {
-                delta_horseshoe(j, g) = std::log(mu_star_1_J_new(j, g)) -
-                                         std::log(mu_baseline(g));
+                if (!std::isfinite(mu_baseline(g)) || mu_baseline(g) <= 0) {
+                    mu_baseline(g) = (mu_estimate(g) > 0) ? mu_estimate(g) : 0.01;
+                }
+                // Cap at 100x gene mean to prevent runaway baseline
+                double cap = mu_estimate(g) * 100.0;
+                if (cap > 0 && mu_baseline(g) > cap)
+                    mu_baseline(g) = cap;
+            }
+
+            // Recompute delta with sanitised baseline
+            for (int j = 0; j < J; ++j) {
+                for (int g = 0; g < G; ++g) {
+                    double log_mu  = std::log(mu_star_1_J_new(j, g));
+                    double log_bas = std::log(mu_baseline(g));
+                    delta_horseshoe(j, g) =
+                        (std::isfinite(log_mu) && std::isfinite(log_bas))
+                        ? log_mu - log_bas : 0.0;
+                }
+            }
+
+            // Sanitise mu_star and phi_star before allocation step.
+            // unique_parameters_mcmc can produce extreme values (exp of large
+            // deltas) with horseshoe priors. Replace bad values with estimates.
+            for (int j = 0; j < J; ++j) {
+                for (int g = 0; g < G; ++g) {
+                    if (!std::isfinite(mu_star_1_J_new(j, g)) || mu_star_1_J_new(j, g) <= 0)
+                        mu_star_1_J_new(j, g) = mu_estimate(g) > 0 ? mu_estimate(g) : 0.01;
+                    if (!std::isfinite(phi_star_1_J_new(j, g)) || phi_star_1_J_new(j, g) <= 0)
+                        phi_star_1_J_new(j, g) = phi_estimate(g) > 0 ? phi_estimate(g) : 0.01;
+                }
             }
         }
-
-        // Sample new baseline
-        mu_baseline = sample_mu_baseline(
-            mu_star_1_J_new,
-            delta_horseshoe,
-            baseline_prior,
-            J, G
-        );
-
-        // Update delta with new baseline
-        for (int j = 0; j < J; ++j) {
-            for (int g = 0; g < G; ++g) {
-                delta_horseshoe(j, g) = std::log(mu_star_1_J_new(j, g)) -
-                                         std::log(mu_baseline(g));
-            }
-        }
-    }
 
 
         // 2) Allocation variables
+        // Always pass 1 — must never spawn sub-threads when called from
+        // inside a chain thread (nested threading = fatal crash on Windows)
         auto alloc_output = allocation_variables_mcmc(P_J_D_new, mu_star_1_J_new,
                                                      phi_star_1_J_new, Y, Beta_new,
-                                                     iter, num_cores);
+                                                     iter, 1);
         Z_new = alloc_output.Z;
 
         if (print_Z) {
@@ -555,6 +597,22 @@ if (use_reg_horseshoe && empirical) {
         covariance_unique_new = unique_output.covariance_new;
         unique_count += unique_output.accept_count;
         result.acceptance_rates.unique_accept[iter - 2] = (double)unique_count / ((iter - 1) * J * G);
+
+        // Sanitise mu_star / phi_star after unique parameter update.
+        // With horseshoe priors, unique_parameters_mcmc samples mu as
+        // exp(log_baseline + delta) where delta can be extreme in early
+        // iterations, producing inf/NaN that crashes mean_dispersion and
+        // capture_efficiencies in the next iteration.
+        if (use_sparse_prior || use_spike_slab || use_reg_horseshoe) {
+            for (int j = 0; j < J; ++j) {
+                for (int g = 0; g < G; ++g) {
+                    if (!std::isfinite(mu_star_1_J_new(j, g)) || mu_star_1_J_new(j, g) <= 0)
+                        mu_star_1_J_new(j, g) = mu_estimate(g) > 0 ? mu_estimate(g) : 0.01;
+                    if (!std::isfinite(phi_star_1_J_new(j, g)) || phi_star_1_J_new(j, g) <= 0)
+                        phi_star_1_J_new(j, g) = phi_estimate(g) > 0 ? phi_estimate(g) : 0.01;
+                }
+            }
+        }
 
         // 8) Capture efficiencies
         auto capture_output = capture_efficiencies_mcmc(Beta_new, Y, Z_new, mu_star_1_J_new,

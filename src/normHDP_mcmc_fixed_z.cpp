@@ -325,7 +325,7 @@ Rcpp::List normHDP_mcmc_fixed_z(
     Eigen::MatrixXd delta_horseshoe;
     if (use_horseshoe || use_spike_slab || use_reg_horseshoe || use_gene_horseshoe) {
         // Initialize prior from data (weak)
-        baseline_prior = initialize_baseline_prior(mu_estimate, J, G);
+        baseline_prior = initialize_baseline_prior(mu_star_1_J_initial, J, G);
 
         // Initial baseline: sample from prior (NOT mu_estimate)
         std::normal_distribution<double> std_normal(0.0, 1.0);

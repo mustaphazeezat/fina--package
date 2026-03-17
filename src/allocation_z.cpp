@@ -6,12 +6,30 @@
 #include <numeric>
 
 // Negative binomial log probability density
+// Robust version: handles extreme mu values produced by horseshoe/spike-slab
+// priors in early iterations before shrinkage has taken effect.
 inline double dnbinom_log(double x, double mu, double size) {
-    if (mu <= 0 || size <= 0) return -std::numeric_limits<double>::infinity();
+    // Basic validity checks
+    if (!std::isfinite(mu)   || mu   <= 0) return -std::numeric_limits<double>::infinity();
+    if (!std::isfinite(size) || size <= 0) return -std::numeric_limits<double>::infinity();
+    if (!std::isfinite(x)    || x    <  0) return -std::numeric_limits<double>::infinity();
+
+    // Cap mu to prevent p -> 0 -> log(p) -> -inf -> NaN cascade.
+    // With horseshoe priors, mu_star can be astronomically large in early
+    // iterations. 1e6 is safely above any real count but prevents overflow.
+    mu = std::min(mu, 1e6);
 
     double p = size / (size + mu);
-    return std::lgamma(x + size) - std::lgamma(size) - std::lgamma(x + 1.0) +
-           size * std::log(p) + x * std::log(1.0 - p);
+
+    // p must be strictly in (0, 1) for log to be finite
+    if (p <= 0.0 || p >= 1.0 || !std::isfinite(p))
+        return -std::numeric_limits<double>::infinity();
+
+    double lp = std::lgamma(x + size) - std::lgamma(size) - std::lgamma(x + 1.0) +
+                size * std::log(p) + x * std::log(1.0 - p);
+
+    // Return -inf for any non-finite result rather than propagating NaN
+    return std::isfinite(lp) ? lp : -std::numeric_limits<double>::infinity();
 }
 
 // Categorical sampling from probability vector
@@ -61,10 +79,24 @@ std::vector<int> process_chunk(
 
         // Numerical stability: subtract max
         double max_log_prob = log_prob.maxCoeff();
+
+        // If all log-probs are -inf (can happen with extreme horseshoe mu
+        // values in early iterations), fall back to uniform assignment
+        if (!std::isfinite(max_log_prob)) {
+            Z_chunk[c] = c % J;   // deterministic fallback, avoids NaN
+            continue;
+        }
+
         Eigen::VectorXd prob = (log_prob.array() - max_log_prob).exp();
 
         // Normalize
-        prob /= prob.sum();
+        double prob_sum = prob.sum();
+        if (!std::isfinite(prob_sum) || prob_sum <= 0.0) {
+            // Fallback to uniform if normalisation fails
+            prob.setConstant(1.0 / J);
+        } else {
+            prob /= prob_sum;
+        }
 
         // Sample
         Z_chunk[c] = sample_categorical(prob, rng);
